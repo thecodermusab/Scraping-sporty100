@@ -121,10 +121,39 @@ def scrape_sporty100(headless=True) -> List[Dict]:
     wait = WebDriverWait(driver, 15)
 
     try:
-        # ── STEP 1: Load sporty100.com and collect match names ───────────────
+        # ── STEP 1: Load sporty100.com and apply Live filter ─────────────────
         logger.info("Loading sporty100.com...")
         driver.get("https://sporty100.com/")
         time.sleep(5)
+
+        # Click the "Live" filter button so only live matches are shown
+        live_clicked = False
+        for btn in driver.find_elements(By.TAG_NAME, 'button'):
+            try:
+                if btn.text.strip().lower() in ('live', 'live now'):
+                    driver.execute_script("arguments[0].click();", btn)
+                    logger.info("Clicked Live filter")
+                    time.sleep(3)
+                    live_clicked = True
+                    break
+            except Exception:
+                continue
+
+        if not live_clicked:
+            # Fallback: look inside any element with role="tab" or similar
+            for el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"], [role="button"]'):
+                try:
+                    if el.text.strip().lower() in ('live', 'live now'):
+                        driver.execute_script("arguments[0].click();", el)
+                        logger.info("Clicked Live filter (tab/button fallback)")
+                        time.sleep(3)
+                        live_clicked = True
+                        break
+                except Exception:
+                    continue
+
+        if not live_clicked:
+            logger.warning("Could not find Live filter button — scraping all matches instead")
 
         home_url = driver.current_url
 
