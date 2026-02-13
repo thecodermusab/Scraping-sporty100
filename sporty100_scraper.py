@@ -126,13 +126,24 @@ def scrape_sporty100(headless=True) -> List[Dict]:
         driver.get("https://sporty100.com/")
         time.sleep(5)
 
-        # Click the "Live" filter button so only live matches are shown
+        # Save homepage snapshot so we can inspect filter button names if needed
+        with open('sporty100_debug.html', 'w', encoding='utf-8') as f:
+            f.write(driver.page_source)
+        logger.info("Saved sporty100_debug.html (homepage snapshot)")
+
+        # Log all clickable button/tab texts so we know what's on the page
+        all_btns = driver.find_elements(By.CSS_SELECTOR, 'button, [role="tab"], [role="button"]')
+        btn_texts = list({b.text.strip() for b in all_btns if b.text.strip()})
+        logger.info(f"Buttons/tabs found on page: {btn_texts}")
+
+        # Try clicking the Live filter (button or tab)
         live_clicked = False
-        for btn in driver.find_elements(By.TAG_NAME, 'button'):
+        for el in all_btns:
             try:
-                if btn.text.strip().lower() in ('live', 'live now'):
-                    driver.execute_script("arguments[0].click();", btn)
-                    logger.info("Clicked Live filter")
+                txt = el.text.strip().lower()
+                if txt in ('live', 'live now', 'live matches'):
+                    driver.execute_script("arguments[0].click();", el)
+                    logger.info(f"Clicked Live filter: '{el.text.strip()}'")
                     time.sleep(3)
                     live_clicked = True
                     break
@@ -140,48 +151,48 @@ def scrape_sporty100(headless=True) -> List[Dict]:
                 continue
 
         if not live_clicked:
-            # Fallback: look inside any element with role="tab" or similar
-            for el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"], [role="button"]'):
-                try:
-                    if el.text.strip().lower() in ('live', 'live now'):
-                        driver.execute_script("arguments[0].click();", el)
-                        logger.info("Clicked Live filter (tab/button fallback)")
-                        time.sleep(3)
-                        live_clicked = True
-                        break
-                except Exception:
-                    continue
-
-        if not live_clicked:
-            logger.warning("Could not find Live filter button — scraping all matches instead")
+            logger.warning("Could not find Live filter button — will filter cards by LIVE badge instead")
 
         home_url = driver.current_url
 
         # Match cards are div[role="button"] with aria-label="View details for match: X vs Y"
-        match_cards = driver.find_elements(
+        all_cards = driver.find_elements(
             By.CSS_SELECTOR, 'div[role="button"][aria-label^="View details for match:"]'
         )
 
-        if not match_cards:
-            logger.warning("No match cards found. Saving debug snapshot...")
-            with open('sporty100_debug.html', 'w', encoding='utf-8') as f:
-                f.write(driver.page_source)
-            logger.info("Saved sporty100_debug.html")
+        if not all_cards:
+            logger.warning("No match cards found. Check sporty100_debug.html")
             return []
+
+        # Keep only LIVE cards — check inner text for a "live" badge
+        # This works whether or not the filter button was clicked
+        match_cards = []
+        for card in all_cards:
+            try:
+                inner = card.text.strip().lower()
+                if 'live' in inner:
+                    match_cards.append(card)
+            except Exception:
+                continue
+
+        # If the badge check found nothing, fall back to all cards
+        # (means the site may not show a text badge)
+        if not match_cards:
+            logger.warning("No LIVE badge found on any card — using all cards as fallback")
+            match_cards = all_cards
 
         # Collect match names from aria-label before clicking anything
         match_names = []
         for card in match_cards:
             try:
                 label = card.get_attribute('aria-label') or ''
-                # aria-label = "View details for match: Chelsea vs Hull"
                 name = label.replace('View details for match:', '').strip()
                 if name:
                     match_names.append(name)
             except Exception:
                 continue
 
-        logger.info(f"Found {len(match_names)} matches: {match_names[:5]}...")
+        logger.info(f"Found {len(match_names)} LIVE matches: {match_names}")
 
         # ── STEP 2: Click each match card, find "Go to Streamly" ────────────
         for i, match_name in enumerate(match_names):
